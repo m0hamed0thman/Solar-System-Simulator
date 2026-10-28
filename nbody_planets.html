@@ -1,0 +1,476 @@
+<title>N-Body Planets</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one big "space" stage with a planet (process) on its edge, a caption under it, then a phase strip and controls. */
+  :root {
+    --bg: #080d1c;
+    --panel: #111a33;
+    --panel-hi: #1b2750;
+    --line: #27345c;
+    --fg: #e9edf9;
+    --muted: #97a3c4;
+    --p0: #f5b43c;
+    --p1: #4cc9e8;
+    --p2: #ff7a6b;
+    --p3: #a78bfa;
+    --p4: #6ee0a0;
+    --p5: #f08fd0;
+    --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-display);
+    font-weight: 500;
+    padding-block: 20px 32px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  header { display: flex; flex-direction: column; gap: 4px; }
+  h1 { margin: 0; font-size: clamp(1.7rem, 4.5vw, 2.6rem); font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); font-size: 1.05rem; max-width: 60ch; }
+
+  .stage { position: relative; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #070b17; }
+  canvas { display: block; width: 100%; aspect-ratio: 16 / 9.5; }
+  @media (max-width: 640px) { canvas { aspect-ratio: 4 / 5; } }
+
+  .caption { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; align-items: end; padding: 2px 2px 0; }
+  .caption .kicker { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); grid-column: 1 / -1; }
+  .caption h2 { margin: 0; font-size: clamp(1.4rem, 3.6vw, 2rem); font-weight: 800; letter-spacing: -0.01em; grid-column: 1 / -1; }
+  .caption .text { margin: 0; font-size: clamp(1.02rem, 2.4vw, 1.2rem); line-height: 1.45; max-width: 62ch; }
+  .caption .mpi { font-family: var(--font-mono); font-size: 0.85rem; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; white-space: nowrap; }
+  @media (max-width: 640px) { .caption { grid-template-columns: minmax(0, 1fr); } .caption .mpi { white-space: normal; justify-self: start; } }
+
+  .chips { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 760px) { .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .chip { text-align: left; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; transition: background 0.2s, border-color 0.2s; }
+  .chip .n { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); }
+  .chip .t { font-weight: 700; font-size: 1rem; }
+  .chip .s { font-size: 0.8rem; color: var(--muted); }
+  .chip[aria-current="true"] { background: var(--panel-hi); border-color: #8fa3d9; }
+  .chip[aria-current="true"] .n { color: var(--fg); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+  .group { display: flex; align-items: center; gap: 8px; }
+  .group > span { font-size: 0.85rem; color: var(--muted); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  button { font: inherit; color: var(--fg); }
+  .seg button, .btn { background: var(--panel); border: 0; padding: 8px 14px; cursor: pointer; font-weight: 700; font-size: 0.95rem; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--panel-hi); }
+  .btn { border: 1px solid var(--line); border-radius: 10px; min-width: 84px; }
+  .btn.main { background: #dfe6ff; color: #0a1130; border-color: #dfe6ff; }
+  button:focus-visible { outline: 2px solid #8fa3d9; outline-offset: 2px; }
+  .stats { margin-left: auto; font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
+  .stats b { color: var(--fg); font-weight: 500; }
+  .legend { font-size: 0.9rem; color: var(--muted); margin: 0; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>N-Body Planets</h1>
+    <p>Each planet is one MPI process. The dots in the middle are bodies in space. Watch how the processes share the work.</p>
+  </header>
+
+  <div class="stage"><canvas id="cv" aria-label="Animation of MPI processes sharing an N-body simulation"></canvas></div>
+
+  <div class="caption" id="caption">
+    <div class="kicker" id="kicker"></div>
+    <h2 id="ptitle"></h2>
+    <p class="text" id="ptext"></p>
+    <div class="mpi" id="pmpi"></div>
+  </div>
+
+  <div class="chips" id="chips"></div>
+
+  <div class="controls">
+    <button class="btn main" id="play" type="button">Pause</button>
+    <button class="btn" id="next" type="button">Next phase</button>
+    <div class="group"><span>Speed</span>
+      <div class="seg" id="speedSeg">
+        <button type="button" data-v="0.5" aria-pressed="false">0.5x</button>
+        <button type="button" data-v="1" aria-pressed="true">1x</button>
+        <button type="button" data-v="2" aria-pressed="false">2x</button>
+      </div>
+    </div>
+    <div class="group"><span>Processes</span>
+      <div class="seg" id="procSeg">
+        <button type="button" data-v="2" aria-pressed="false">2</button>
+        <button type="button" data-v="3" aria-pressed="false">3</button>
+        <button type="button" data-v="4" aria-pressed="true">4</button>
+        <button type="button" data-v="6" aria-pressed="false">6</button>
+      </div>
+    </div>
+    <div class="stats"><span>Bodies <b id="sN">50</b></span><span>Time step <b id="sStep">0</b></span></div>
+  </div>
+  <p class="legend">Dot color = the process that owns that body. The small squares under each planet show which processes' positions it knows.</p>
+</div>
+
+<script>
+(function () {
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var css = getComputedStyle(document.documentElement);
+  function tok(n, f) { var v = css.getPropertyValue(n).trim(); return v || f; }
+  var COLORS = ['--p0', '--p1', '--p2', '--p3', '--p4', '--p5'].map(function (n, i) {
+    return tok(n, ['#f5b43c', '#4cc9e8', '#ff7a6b', '#a78bfa', '#6ee0a0', '#f08fd0'][i]);
+  });
+  var LINE = tok('--line', '#27345c'), FG = tok('--fg', '#e9edf9'), MUTED = tok('--muted', '#97a3c4');
+  var FONT = '"Bricolage Grotesque", system-ui, sans-serif', MONO = '"IBM Plex Mono", ui-monospace, monospace';
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- helpers ---------- */
+  function hex2rgb(h) { h = h.replace('#', ''); return [0, 2, 4].map(function (i) { return parseInt(h.substr(i, 2), 16); }); }
+  function mix(c1, c2, t) {
+    var a = hex2rgb(c1), b = hex2rgb(c2);
+    return 'rgb(' + a.map(function (v, i) { return Math.round(v + (b[i] - v) * t); }).join(',') + ')';
+  }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  /* ---------- physics (small real N-body, same idea as the C code) ---------- */
+  var N = 50, G = 1, EPS = 0.08, DT = 0.06, SUB = 8, M = 1 / N;
+  var X = new Float64Array(N), Y = new Float64Array(N), VX = new Float64Array(N), VY = new Float64Array(N);
+  var AX = new Float64Array(N), AY = new Float64Array(N);
+  var frames = null;
+  (function init() {
+    var r = rng(7);
+    for (var i = 0; i < N; i++) {
+      var rad = Math.sqrt(r()) * 0.95 + 0.04, a = r() * Math.PI * 2;
+      X[i] = Math.cos(a) * rad; Y[i] = Math.sin(a) * rad;
+      var v = 0.75 * Math.sqrt(rad);
+      VX[i] = -Math.sin(a) * v + (r() - 0.5) * 0.1; VY[i] = Math.cos(a) * v + (r() - 0.5) * 0.1;
+    }
+    accel();
+  })();
+  function accel() {
+    var e2 = EPS * EPS;
+    for (var i = 0; i < N; i++) {
+      var ax = 0, ay = 0;
+      for (var j = 0; j < N; j++) {
+        if (i === j) continue;
+        var dx = X[j] - X[i], dy = Y[j] - Y[i];
+        var r2 = dx * dx + dy * dy + e2, inv = 1 / (r2 * Math.sqrt(r2));
+        ax += G * M * dx * inv; ay += G * M * dy * inv;
+      }
+      var rr = Math.sqrt(X[i] * X[i] + Y[i] * Y[i]);
+      if (rr > 1.25) { var k = 2.5 * (rr - 1.25) / rr; ax -= k * X[i]; ay -= k * Y[i]; }
+      AX[i] = ax; AY[i] = ay;
+    }
+  }
+  function runPhysics() {
+    frames = [{ x: Float64Array.from(X), y: Float64Array.from(Y) }];
+    for (var s = 0; s < SUB; s++) {
+      for (var i = 0; i < N; i++) { VX[i] += 0.5 * DT * AX[i]; VY[i] += 0.5 * DT * AY[i]; X[i] += DT * VX[i]; Y[i] += DT * VY[i]; }
+      accel();
+      for (i = 0; i < N; i++) { VX[i] += 0.5 * DT * AX[i]; VY[i] += 0.5 * DT * AY[i]; }
+      frames.push({ x: Float64Array.from(X), y: Float64Array.from(Y) });
+    }
+  }
+
+  /* ---------- processes ---------- */
+  var P = 4, owner = new Int8Array(N), starts = [], counts = [];
+  function setProcesses(p) {
+    P = p; starts = []; counts = [];
+    var base = Math.floor(N / P), rem = N % P, off = 0;
+    for (var r = 0; r < P; r++) {
+      var c = base + (r < rem ? 1 : 0);
+      counts.push(c); starts.push(off);
+      for (var i = off; i < off + c; i++) owner[i] = r;
+      off += c;
+    }
+  }
+
+  /* ---------- phases ---------- */
+  var DUR = [3400, 3600, 2600, 3400, 2600];
+  var PH = [
+    { t: 'Split', sub: 'once, at the start', title: 'Split the bodies', mpi: 'MPI_Comm_rank, MPI_Comm_size',
+      text: function () { return N + ' bodies are cut into ' + P + ' groups (' + counts.join(', ') + '). Each planet owns one group.'; } },
+    { t: 'Compute', sub: 'every time step', title: 'Compute the pull', mpi: 'all processes work at the same time',
+      text: function () { return 'Each process finds the gravity on its own bodies. To do that, it looks at all ' + N + ' bodies. This is the heavy work.'; } },
+    { t: 'Move', sub: 'every time step', title: 'Move my bodies', mpi: 'no MPI call here',
+      text: function () { return 'Each process changes the speed and place of its own bodies only. Nobody waits for the others.'; } },
+    { t: 'Share', sub: 'every time step', title: 'Share new positions', mpi: 'MPI_Allgatherv',
+      text: function () { return 'Everyone sends its new positions to everyone. After this, every process knows where all bodies are.'; } },
+    { t: 'Energy', sub: 'every 4 steps', title: 'Check the energy', mpi: 'MPI_Reduce (MPI_SUM)',
+      text: function () { return 'All processes send their energy to Process 0. It adds them up. The total should stay almost the same.'; } }
+  ];
+
+  var phase = 0, t = 0, step = 0, playing = !reduced, speed = 1, clock = 0, last = performance.now();
+  var chipsEl = document.getElementById('chips');
+  PH.forEach(function (ph, i) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip';
+    b.innerHTML = '<span class="n">PHASE ' + (i + 1) + '</span><span class="t">' + ph.t + '</span><span class="s">' + ph.sub + '</span>';
+    b.addEventListener('click', function () { goto(i); });
+    chipsEl.appendChild(b);
+  });
+  var chipEls = chipsEl.children;
+
+  function updateUI() {
+    var ph = PH[phase];
+    document.getElementById('kicker').textContent = 'Phase ' + (phase + 1) + ' of 5';
+    document.getElementById('ptitle').textContent = ph.title;
+    document.getElementById('ptext').textContent = ph.text();
+    document.getElementById('pmpi').textContent = ph.mpi;
+    document.getElementById('sStep').textContent = step;
+    document.getElementById('sN').textContent = N;
+    for (var i = 0; i < chipEls.length; i++) chipEls[i].setAttribute('aria-current', i === phase ? 'true' : 'false');
+  }
+  function goto(ph) { phase = ph; t = 0; if (ph === 2) runPhysics(); updateUI(); }
+  function nextPhase() {
+    if (phase === 3) { step++; return step % 4 === 0 ? 4 : 1; }
+    if (phase === 0) return 1;
+    if (phase === 1) return 2;
+    if (phase === 2) return 3;
+    return 1;
+  }
+
+  /* ---------- layout ---------- */
+  var W = 0, H = 0, dpr = 1, cx = 0, cy = 0, S = 100, PR = 28, planets = [];
+  var stars = [];
+  (function () { var r = rng(3); for (var i = 0; i < 110; i++) stars.push({ x: r(), y: r(), s: r() * 1.3 + 0.3, p: r() * 6.28 }); })();
+  function layout() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cx = W / 2; cy = H / 2;
+    S = Math.min(W, H) * 0.24;
+    PR = clamp(Math.min(W, H) * 0.062, 20, 38);
+    planets = [];
+    var rx = W / 2 - PR - 14, ry = H / 2 - PR - 12, k, a;
+    for (k = 0; k < P; k++) {
+      var x, y;
+      if (P === 2) { x = cx + (k === 0 ? -rx : rx); y = cy; }
+      else if (P === 4) { x = cx + (k % 3 === 0 ? -rx : rx); y = cy + (k < 2 ? -ry : ry); }
+      else {
+        a = (P === 3 ? [-90, 30, 150][k] : -90 + k * 360 / P) * Math.PI / 180;
+        x = cx + Math.cos(a) * rx; y = cy + Math.sin(a) * ry;
+      }
+      planets.push({ x: x, y: y });
+    }
+  }
+  new ResizeObserver(layout).observe(cv);
+
+  /* ---------- drawing ---------- */
+  function curvePt(a, b, q, sign) {
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y;
+    var d = Math.sqrt(dx * dx + dy * dy) || 1, off = 0.16 * d * sign;
+    var qx = mx - dy / d * off, qy = my + dx / d * off, u = 1 - q;
+    return { x: u * u * a.x + 2 * u * q * qx + q * q * b.x, y: u * u * a.y + 2 * u * q * qy + q * q * b.y };
+  }
+  function packet(a, b, q, color) {
+    if (q <= 0 || q >= 1) return;
+    var sign = a < b ? 1 : -1, A = planets[a], B = planets[b], i, pt;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.35; ctx.beginPath();
+    for (i = 0; i <= 8; i++) { pt = curvePt(A, B, Math.max(0, q - 0.22) + (Math.min(q, 0.22)) * i / 8, sign); if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); }
+    ctx.stroke();
+    pt = curvePt(A, B, q, sign);
+    ctx.globalAlpha = 1; ctx.fillStyle = color;
+    ctx.fillRect(pt.x - 4.5, pt.y - 4.5, 9, 9);
+    ctx.globalAlpha = 0.25; ctx.fillRect(pt.x - 8, pt.y - 8, 16, 16);
+    ctx.globalAlpha = 1;
+  }
+  function guide(a, b) {
+    var sign = a < b ? 1 : -1, A = planets[a], B = planets[b], pt;
+    ctx.beginPath();
+    for (var i = 0; i <= 14; i++) { pt = curvePt(A, B, i / 14, sign); if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); }
+    ctx.stroke();
+  }
+  function stag(a, b) { return ((a * 3 + b * 5) % 7) / 7 * 0.2; }
+  function pq(p, a, b) { return clamp((p - stag(a, b)) / 0.72, 0, 1); }
+
+  function slotKnown(b, a, p) {
+    if (a === b) return 1;
+    if (phase === 2) return p > 0.3 ? 0 : 1;
+    if (phase === 3) return pq(p, a, b) >= 1 ? 1 : 0;
+    return 1;
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var i, k, j, p = clamp(t / DUR[phase], 0, 1);
+
+    /* space background */
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.7);
+    g.addColorStop(0, '#142046'); g.addColorStop(1, '#060a16');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#cfd8ff';
+    for (i = 0; i < stars.length; i++) {
+      var st = stars[i]; ctx.globalAlpha = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(clock / 900 + st.p));
+      ctx.fillRect(st.x * W, st.y * H, st.s, st.s);
+    }
+    ctx.globalAlpha = 1;
+
+    /* shared space ring */
+    ctx.setLineDash([4, 7]); ctx.strokeStyle = LINE; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(cx, cy, S * 1.3, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    /* body positions (smooth during Move) */
+    var bx = new Float64Array(N), by = new Float64Array(N);
+    if (phase === 2 && frames) {
+      var f = ease(p) * (frames.length - 1), f0 = Math.min(Math.floor(f), frames.length - 2), fr = f - f0;
+      for (i = 0; i < N; i++) {
+        bx[i] = frames[f0].x[i] + (frames[f0 + 1].x[i] - frames[f0].x[i]) * fr;
+        by[i] = frames[f0].y[i] + (frames[f0 + 1].y[i] - frames[f0].y[i]) * fr;
+      }
+    } else { bx.set(X); by.set(Y); }
+    var sx = function (i) { return cx + bx[i] * S; }, sy = function (i) { return cy + by[i] * S; };
+
+    /* planets */
+    for (k = 0; k < P; k++) {
+      var pl = planets[k], col = COLORS[k];
+      var act = 0.4;
+      if (phase === 1) act = 0.7 + 0.3 * Math.sin(clock / 220 + k);
+      else if (phase === 2) act = 0.8;
+      else if (phase === 3) act = 0.5;
+      else if (phase === 4) act = k === 0 ? 0.5 + 0.5 * p : 0.4;
+      var halo = ctx.createRadialGradient(pl.x, pl.y, PR * 0.8, pl.x, pl.y, PR * 2.6);
+      halo.addColorStop(0, col); halo.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = 0.12 + 0.28 * act; ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(pl.x, pl.y, PR * 2.6, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      /* back half of ring */
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = 0.45;
+      ctx.beginPath(); ctx.ellipse(pl.x, pl.y, PR * 1.65, PR * 0.48, -0.35, Math.PI, Math.PI * 2); ctx.stroke();
+      /* sphere */
+      var sph = ctx.createRadialGradient(pl.x - PR * 0.35, pl.y - PR * 0.4, PR * 0.1, pl.x, pl.y, PR);
+      sph.addColorStop(0, mix(col, '#ffffff', 0.55)); sph.addColorStop(0.55, col); sph.addColorStop(1, mix(col, '#000000', 0.6));
+      ctx.globalAlpha = 1; ctx.fillStyle = sph;
+      ctx.beginPath(); ctx.arc(pl.x, pl.y, PR, 0, Math.PI * 2); ctx.fill();
+      /* front half of ring */
+      ctx.globalAlpha = 0.8; ctx.strokeStyle = col;
+      ctx.beginPath(); ctx.ellipse(pl.x, pl.y, PR * 1.65, PR * 0.48, -0.35, 0, Math.PI); ctx.stroke();
+      ctx.globalAlpha = 1;
+      /* moon */
+      var ma = clock / 1400 + k * 1.7, mxp = Math.cos(ma) * PR * 1.65, myp = Math.sin(ma) * PR * 0.48;
+      var cs = Math.cos(-0.35), sn = Math.sin(-0.35);
+      ctx.fillStyle = FG; ctx.beginPath(); ctx.arc(pl.x + mxp * cs - myp * sn, pl.y + mxp * sn + myp * cs, 2.6, 0, Math.PI * 2); ctx.fill();
+      /* rank number or sigma */
+      ctx.fillStyle = '#0a1130'; ctx.font = '800 ' + Math.round(PR * 0.8) + 'px ' + FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(phase === 4 && k === 0 && p > 0.55 ? 'Σ' : String(k), pl.x, pl.y + 1);
+      /* progress ring while computing */
+      if (phase === 1) {
+        ctx.strokeStyle = col; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(pl.x, pl.y, PR + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p); ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+      /* tag: name, count, memory squares */
+      var dir = pl.y <= cy ? 1 : -1, y0 = pl.y + dir * (PR + 10);
+      var yName = dir > 0 ? y0 + 6 : y0 - 32, ySub = dir > 0 ? y0 + 22 : y0 - 16, ySq = dir > 0 ? y0 + 38 : y0;
+      ctx.fillStyle = FG; ctx.font = '700 ' + (W < 520 ? 12 : 14) + 'px ' + FONT;
+      ctx.fillText('Process ' + k, pl.x, yName);
+      ctx.fillStyle = MUTED; ctx.font = '500 ' + (W < 520 ? 10 : 11.5) + 'px ' + MONO;
+      ctx.fillText(counts[k] + ' bodies', pl.x, ySub);
+      var tw = P * 11 - 3, sx0 = pl.x - tw / 2;
+      for (j = 0; j < P; j++) {
+        var known = slotKnown(k, j, p);
+        ctx.fillStyle = COLORS[j]; ctx.globalAlpha = known ? 1 : 0.18;
+        ctx.fillRect(sx0 + j * 11, ySq + (dir > 0 ? -5 : 0), 8, 8);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* split: lines from planet to its bodies */
+    if (phase === 0) {
+      for (i = 0; i < N; i++) {
+        var ps = clamp((p - 0.05 - (i / N) * 0.55) / 0.3, 0, 1);
+        if (ps > 0 && ps < 1) {
+          var o = planets[owner[i]], e = ease(ps);
+          ctx.strokeStyle = COLORS[owner[i]]; ctx.globalAlpha = 0.5; ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + (sx(i) - o.x) * e, o.y + (sy(i) - o.y) * e); ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* compute: each process looks at all bodies */
+    if (phase === 1) {
+      ctx.lineWidth = 1;
+      var tick = Math.floor(clock / 450);
+      for (k = 0; k < P; k++) {
+        ctx.strokeStyle = COLORS[k];
+        for (var s = 0; s < 3; s++) {
+          var mine = starts[k] + ((tick * 2 + s * 5) % counts[k]);
+          ctx.globalAlpha = 0.14 + 0.1 * Math.sin(clock / 200 + s + k);
+          ctx.beginPath();
+          for (j = 0; j < N; j += 3) { if (j === mine) continue; ctx.moveTo(sx(mine), sy(mine)); ctx.lineTo(sx(j), sy(j)); }
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* bodies */
+    for (i = 0; i < N; i++) {
+      var c = COLORS[owner[i]];
+      var split = phase === 0 ? clamp((p - 0.05 - (i / N) * 0.55) / 0.3, 0, 1) : 1;
+      var fill = split >= 1 ? c : mix('#7d89aa', c, split);
+      var rb = W < 520 ? 2.6 : 3.4;
+      ctx.fillStyle = fill; ctx.globalAlpha = 0.22; ctx.beginPath(); ctx.arc(sx(i), sy(i), rb * 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(sx(i), sy(i), rb, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* share and reduce packets */
+    var a, b;
+    if (phase === 3) {
+      ctx.strokeStyle = FG; ctx.lineWidth = 1; ctx.globalAlpha = 0.07;
+      for (a = 0; a < P; a++) for (b = 0; b < P; b++) if (a !== b) guide(a, b);
+      ctx.globalAlpha = 1;
+      for (a = 0; a < P; a++) for (b = 0; b < P; b++) if (a !== b) packet(a, b, pq(p, a, b), COLORS[a]);
+    }
+    if (phase === 4) {
+      ctx.strokeStyle = FG; ctx.lineWidth = 1; ctx.globalAlpha = 0.1;
+      for (a = 1; a < P; a++) guide(a, 0);
+      ctx.globalAlpha = 1;
+      for (a = 1; a < P; a++) packet(a, 0, pq(p, a, 0), '#ffe08a');
+    }
+  }
+
+  /* ---------- loop ---------- */
+  function frame(now) {
+    var d = Math.min(now - last, 60); last = now; clock += d;
+    if (playing) {
+      t += d * speed;
+      if (t >= DUR[phase]) goto(nextPhase());
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- controls ---------- */
+  var playBtn = document.getElementById('play');
+  function syncPlay() { playBtn.textContent = playing ? 'Pause' : 'Play'; }
+  playBtn.addEventListener('click', function () { playing = !playing; syncPlay(); });
+  document.getElementById('next').addEventListener('click', function () { goto(nextPhase()); });
+  function seg(id, fn) {
+    var el = document.getElementById(id);
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      Array.prototype.forEach.call(el.children, function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      fn(parseFloat(b.dataset.v));
+    });
+  }
+  seg('speedSeg', function (v) { speed = v; });
+  seg('procSeg', function (v) { setProcesses(v); layout(); step = 0; goto(0); });
+
+  setProcesses(4);
+  layout();
+  if (reduced) t = DUR[0] * 0.95;
+  syncPlay();
+  updateUI();
+  requestAnimationFrame(frame);
+})();
+</script>
